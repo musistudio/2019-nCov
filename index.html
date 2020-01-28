@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>2019新型冠状病毒行政分布图</title>
+    <link rel="stylesheet" href="https://cache.amap.com/lbs/static/main1119.css" />
+    <style>
+      .amap-info-content.amap-info-outer {
+          background-color: #27272b;
+          color: #f0f2ff;
+          width: 100px;
+      }
+      .bottom-center .amap-info-sharp {
+          border-top: 8px solid #27272b;
+      }
+      .bottom-center button {
+        border: none;
+        color: #2181ff;
+        float: right;
+        background: transparent;
+      }
+      .amap-info-close {
+        color: #606166;
+      }
+    </style>
+</head>
+
+<body>
+    <div id="container" class="container"></div>
+    <div class="button-group">
+        <input id="up-btn" type="button" class="button" value="行政区上浮" />
+    </div>
+    <script src="https://webapi.amap.com/maps?v=1.4.15&key=605d8d5427b389a86a69288df1c24a0c&"></script>
+    <script src="https://webapi.amap.com/loca?v=1.3.2&key=605d8d5427b389a86a69288df1c24a0c"></script>
+    <script src="https://a.amap.com/Loca/static/dist/jquery.min.js"></script>
+    <script>
+
+        var selected = null
+        var map = new AMap.Map('container', {
+            mapStyle: 'amap://styles/normal',
+            viewMode: '3D',
+            center: [107.4976, 32.1697],
+            zoom: 4,
+        });
+
+        var infoWin;
+
+        infoWin = new AMap.InfoWindow({
+            closeWhenClickMap: true
+        });
+
+        var vLayer = new Loca.DistrictLayer({
+            fitView: true,
+            eventSupport: true,
+            drillDown: false,
+            map: map
+        });
+
+        
+
+        vLayer.on('click', function (ev) {
+            var originalEv = ev.originalEvent;
+
+            var lnglat = map.containerToLngLat(new AMap.Pixel(originalEv.clientX, originalEv.clientY));
+            var feature = ev.feature;
+            var value = ev.value;
+            var property = feature.subFeature.properties;
+            if(property.adcode != 420000 && value >= 20) {
+                selected = feature
+            }else{
+                selected = null
+            }
+            console.log(feature)
+            infoWin.open(map, lnglat);
+            var content = [
+                property.name,
+                '<br>',
+                '确诊人数：' + value + '例',
+                '<br>',
+                property.childrenNum ? '<button onclick="go2Adcode(event, ' + property.adcode + ')">下钻</button>' : ''
+            ];
+            infoWin.setContent(content.join(''));
+        });
+
+        function go2Adcode(event, code) {
+            if(code % 10000 === 0) {
+                vLayer.goto(code);
+            }else{
+                alert('只能下钻到市级')
+            }
+            event.stopPropagation();
+            infoWin.close();
+        }
+
+        $.get('https://wzschool.oss-cn-shenzhen.aliyuncs.com/2019-nCov.csv', function (data) {
+            vLayer.setData(data, {
+                type: 'csv',
+                lnglat: '经纬度',
+                value: '城市确诊人数'
+            });
+
+            vLayer.total = 0;
+
+            vLayer.on('legendupdate', function (ev) {
+                console.log("ev ", ev);
+                var colorLegend = ev.colorLegend;
+                initLegend(colorLegend);
+            });
+
+
+            vLayer._dataSet._data.forEach(data=>{
+                vLayer.total += +data['城市确诊人数']
+            })
+            
+
+            vLayer.setOptions({
+                mode: 'sum',
+                style: {
+                    color: function(obj){
+                        let levels = {};
+                        let colors = ['#fef297', '#ffda7c', '#ffb467', '#ff9269', '#f17555', '#f0603a', '#f34829']
+                        if(obj.feature.subFeature.properties.adcode % 10000 === 0) {
+                            levels = {
+                                10: '#fef297', 
+                                50: '#ffda7c',
+                                100: '#ffb467', 
+                                150: '#ff9269', 
+                                200: '#f17555', 
+                                250: '#f0603a', 
+                                3000: '#f34829'
+                            }
+                        }else{
+                            if(selected) {
+                                let {max, min} = selected.statistics
+                                let num = Math.round((max - min) / 6)
+                                for(let i=1; i<colors.length; i++) {
+                                    levels[min + num * i] = colors[i-1]
+                                }
+                                levels[max] = colors[colors.length-1]
+                            }else{
+                                levels = {
+                                    10: '#fef297', 
+                                    50: '#ffda7c',
+                                    100: '#ffb467', 
+                                    150: '#ff9269', 
+                                    200: '#f17555', 
+                                    250: '#f0603a', 
+                                    3000: '#f34829'
+                                }
+                            }
+                            
+                        }
+                        for(let level in levels) {
+                            if(obj.weight <= level) {
+                                return levels[level]
+                            }
+                        }
+                    },
+                    opacity: 1,
+                    text: function(obj) {
+                        return {
+                        content: `${obj.value.subFeature.properties.name}确诊${obj.value.statistics.sum}例`,  // 文字内容
+                        direction: 'center',  // 文字方位 
+                        offset: [5, -5],  // 偏移大小
+                        fontSize: 10,  // 文字大小
+                        fillColor: '#000',  //文字颜色
+                        strokeColor: "#fff",  // 文字描边颜色
+                        strokeWidth: 3,  // 文字描边宽度
+                    }
+                    }
+                },
+                selectStyle: false,
+            });
+
+            vLayer.render();
+
+        });
+
+        $('#up-btn').click(function () {
+            vLayer.goto(-1);
+        });
+
+    </script>
+</body>
+
+</html>
